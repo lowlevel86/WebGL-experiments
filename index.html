@@ -1,0 +1,360 @@
+<html>
+<head>
+<title>3D for Engineering Visualizations</title>
+</head>
+<body onload="InitProg();" onresize="InitProg();" onmousedown="mouseDownEvent();mouseMoveEvent(event);" onmouseup="mouseUpEvent();" onmousemove="mouseMoveEvent(event);" onkeydown="keyDownEvent(event);" onkeyup="keyUpEvent(event);">
+
+<center>
+<div id="canvasFrameId" style="display:inline-block; width:95%; height:95%; overflow:hidden; border:1px solid #888; text-align:center; margin-bottom:4px;">
+	<canvas id="canvasId">Your browser does not support HTML5</canvas>
+</div>
+</center>
+
+<script type="text/javascript" src="shapes.js"></script>
+<script type="text/javascript" src="render.js"></script>
+
+<!-- vertex shader -->
+<script id="vertexShaderText" type="x-shader/x-vertex">
+precision mediump float;
+
+attribute vec3 vertPosition;
+attribute vec3 vertColor;
+varying vec3 fragColor;
+
+uniform vec2 win;
+uniform vec3 view;
+
+void main()
+{
+	float persp = 1.0;
+	fragColor = vertColor;
+
+	if (view[0] != 0.0)
+	persp = (view[0] - (vertPosition.z - view[1])) / view[0];
+
+	gl_Position = vec4(vertPosition.x*win.x, vertPosition.y*win.y,
+					  (vertPosition.z - view[1]) / view[2], persp);
+
+	gl_PointSize = 2.0;
+}
+</script>
+
+<!-- fragment shader -->
+<script id="fragmentShaderText" type="x-shader/x-fragment">
+precision mediump float;
+
+// Passed in from the vertex shader.
+varying vec3 fragColor;
+
+void main()
+{
+	gl_FragColor = vec4(fragColor, 1.0);
+}
+</script>
+
+<script type="text/javascript">
+
+var program, gl;
+var inputState = {
+	keyDownCode:undefined,
+	keyUpCode:undefined
+};
+
+var norm = {
+   lines_HUD:[] // for the cursor
+};
+var progState = {
+   norm,
+	points:[],
+	point_vcols:[],
+   point_mod_links:[],
+	lines:[],
+	line_vcols:[],
+   line_mod_links:[],
+	tris:[],
+	tri_vcols:[],
+   tri_mod_links:[],
+	quads:[],
+	quad_vcols:[],
+   quad_mod_links:[],
+   
+   // HUD (Heads-Up Display) rendering
+	points_HUD:[],
+	point_vcols_HUD:[],
+   point_mod_links_HUD:[],
+	lines_HUD:[],
+	line_vcols_HUD:[],
+   line_mod_links_HUD:[],
+	tris_HUD:[],
+	tri_vcols_HUD:[],
+   tri_mod_links_HUD:[],
+	quads_HUD:[],
+	quad_vcols_HUD:[],
+   quad_mod_links_HUD:[],
+   
+   // mesh modification
+   mod_seq:[], // sequences
+   mod_val:[], // values
+   
+   // render variables
+   viewBgn:undefined,
+   viewEnd:undefined,
+   persp:undefined,
+   orth:undefined,
+   unitPerPix:undefined,
+
+   vert_buff_size:undefined,
+   draw_buff_interval:undefined
+};
+var iniPanel = document.createElement("p");
+iniPanel.innerHTML = "";
+
+function InitProg()
+{
+	var canvasFrame = document.getElementById("canvasFrameId");
+	var canvas = document.getElementById("canvasId");
+	canvas.width = canvasFrame.clientWidth;
+	canvas.height = canvasFrame.clientHeight;
+
+	gl = canvas.getContext('webgl', {preserveDrawingBuffer:true});
+	if (!gl) {
+		console.log('WebGL not supported, falling back on experimental-webgl');
+		gl = canvas.getContext('experimental-webgl');
+		return;
+	}
+
+	if (!gl) {
+		alert('Your browser does not support WebGL');
+		return;
+	}
+
+	// create shaders
+	var vertexShader = gl.createShader(gl.VERTEX_SHADER);
+	var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+
+	gl.shaderSource(vertexShader, document.getElementById("vertexShaderText").innerHTML);
+	gl.shaderSource(fragmentShader, document.getElementById("fragmentShaderText").innerHTML);
+
+	gl.compileShader(vertexShader);
+	if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+		console.error('ERROR compiling vertex shader!', gl.getShaderInfoLog(vertexShader));
+		return;
+	}
+
+	gl.compileShader(fragmentShader);
+	if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+		console.error('ERROR compiling fragment shader!', gl.getShaderInfoLog(fragmentShader));
+		return;
+	}
+
+	program = gl.createProgram();
+	gl.attachShader(program, vertexShader);
+	gl.attachShader(program, fragmentShader);
+	gl.linkProgram(program);
+	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+		console.error('ERROR linking program!', gl.getProgramInfoLog(program));
+		return;
+	}
+	gl.validateProgram(program);
+	if (!gl.getProgramParameter(program, gl.VALIDATE_STATUS)) {
+		console.error('ERROR validating program!', gl.getProgramInfoLog(program));
+		return;
+	}
+
+	gl.clearDepth(-1.0);
+	gl.depthFunc(gl.GEQUAL);
+	gl.viewport(0.0, 0.0, gl.canvas.width, gl.canvas.height);
+	
+	gl.enable(gl.CULL_FACE);
+	gl.cullFace(gl.FRONT);
+
+	gl.useProgram(program);
+	gl.uniform2f(gl.getUniformLocation(program, "win"), 2.0/gl.canvas.width, 2.0/gl.canvas.height);
+	
+   //render options
+   progState.vert_buff_size = 8192; // number of vertices per gpu draw must be <= 65536
+   progState.draw_buff_interval = 50; // millisecond delay between each gpu draw
+
+
+	// load test data
+   
+   // axis lines
+	var axis_lines = [
+	0.0, 0.0, 0.0, 200, 0.0, 0.0,
+	0.0, 0.0, 0.0, 0.0, 200, 0.0,
+	0.0, 0.0, 0.0, 0.0, 0.0, 200];
+	var axis_line_vcols = [
+	1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+	0.0, 1.0, 0.0, 0.0, 1.0, 0.0,
+	0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+	progState.lines = progState.lines.concat(axis_lines);
+	progState.line_vcols = progState.line_vcols.concat(axis_line_vcols);
+   
+   
+	progState.points = getPlane(4, 500);
+	progState.point_vcols = Array(progState.points.length).fill(0.5);
+	progState.points = progState.points.concat(getPoint());
+	progState.point_vcols = progState.point_vcols.concat([1.0, 0.0, 1.0]);
+	
+
+	progState.quads = getQuadSphere(4, 500);
+	progState.quad_vcols = Array(progState.quads.length).fill(1.0);
+	resizeQuadFaces(progState.quads, 0.6);
+
+	progState.tris = getDisc(10, 200);
+	progState.tri_vcols = Array(progState.tris.length).fill(1.0);
+	resizeTriFaces(progState.tris, 0.8);
+
+	progState.lines = progState.lines.concat(getQuadEdges(progState.quads));
+	progState.lines = progState.lines.concat(getTriEdges(progState.tris));
+	progState.line_vcols = progState.line_vcols.concat(Array(progState.lines.length).fill(0.5));
+
+	var tris, quads, tri_vcols, quad_vcols;
+	[tris, quads] = getUVSphere(15, 15*2+2, 100);
+	resizeTriFaces(tris, 0.9);
+	resizeQuadFaces(quads, 0.9);
+
+	progState.tris = progState.tris.concat(tris);
+	tri_vcols = Array(tris.length).fill(0.4);
+	progState.tri_vcols = progState.tri_vcols.concat(tri_vcols);
+
+	progState.quads = progState.quads.concat(quads);
+	quad_vcols = Array(quads.length).fill(0.4);
+	progState.quad_vcols = progState.quad_vcols.concat(quad_vcols);
+
+
+   // cursor
+   var cursor_lines = [
+   15.0, 0.0, 0.0, -15.0, 0.0, 0.0,
+   0.0, 15.0, 0.0, 0.0, -15.0, 0.0,
+   9.0, 9.0, 0.0, -9.0, 9.0, 0.0,
+   -9.0, 9.0, 0.0, -9.0, -9.0, 0.0,
+   -9.0, -9.0, 0.0, 9.0, -9.0, 0.0,
+   9.0, -9.0, 0.0, 9.0, 9.0, 0.0];
+   var cursor_line_vcols = [
+   0.9, 0.9, 0.9, 0.9, 0.9, 0.9,
+   0.9, 0.9, 0.9, 0.9, 0.9, 0.9,
+   0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+   0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+   0.1, 0.1, 0.1, 0.1, 0.1, 0.1,
+   0.1, 0.1, 0.1, 0.1, 0.1, 0.1];
+   progState.norm.lines_HUD = cursor_lines;//keep in normalized form
+   progState.lines_HUD = cursor_lines;
+	progState.line_vcols_HUD = cursor_line_vcols;
+
+
+   // mesh modification
+   progState.point_mod_links = Array(progState.points.length).fill(0);
+   progState.line_mod_links = Array(progState.lines.length).fill(0);
+   progState.tri_mod_links = Array(progState.tris.length).fill(0);
+   progState.quad_mod_links = Array(progState.quads.length).fill(0);
+   
+   progState.point_mod_links_HUD = Array(progState.points_HUD.length).fill(1);
+   progState.line_mod_links_HUD = Array(progState.lines_HUD.length).fill(1);
+   progState.tri_mod_links_HUD = Array(progState.tris_HUD.length).fill(1);
+   progState.quad_mod_links_HUD = Array(progState.quads_HUD.length).fill(1);
+   
+   // mod sequences
+   progState.mod_seq = [[2, 0], [0]]; // 0 = move, 1 = resize, 2 = rotate
+   progState.mod_val = [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], [[0.0, 0.0, 0.0]]]; // values
+   
+	mainProg(inputState, progState);
+}
+
+function mainProg(inputState, progState)
+{
+	if (!gl)
+	return;
+
+   progState.viewBgn = 300;
+   progState.viewEnd = -350;
+   progState.persp = 310;
+   progState.orth = false;
+   progState.unitPerPix = false;
+
+	gl.clearColor(0.75, 0.85, 0.8, 1.0);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+   // copy normalized meshes for modification
+   progState.lines_HUD = Array.from(progState.norm.lines_HUD);
+
+   renderScene(progState);
+}
+
+function keyDownEvent(e)
+{
+   var vert = 0.0, hori = 0.0, forwardBack = 0.0;
+   
+	if (e.keyCode == 37) // l
+	vert += 5.0;
+	if (e.keyCode == 39) // r
+	vert -= 5.0;
+	if (e.keyCode == 38) // u
+	hori -= 5.0;
+	if (e.keyCode == 40) // d
+	hori += 5.0;
+
+	if (e.keyCode == 70) // f
+	forwardBack += 5.0;
+	if (e.keyCode == 66) // b
+	forwardBack -= 5.0;
+
+	//console.log(e.keyCode);
+   var valList = progState.mod_val[0];
+   
+   var rotVal = valList[0];
+   rotVal[0] += hori * (Math.PI / 180.0);
+   rotVal[1] += vert * (Math.PI / 180.0);
+   rotVal[2] = 0.0;
+
+   var moveVal = valList[1];
+   moveVal[0] = 0.0;
+   moveVal[1] = 0.0;
+   moveVal[2] += forwardBack;
+   
+	inputState.keyDownCode = e.keyCode;
+	mainProg(inputState, progState);
+}
+
+function keyUpEvent(e)
+{
+	inputState.keyUpCode = e.keyCode;
+	mainProg(inputState, progState);
+}
+
+var mouseDrag = false;
+function mouseDownEvent()
+{
+   mouseDrag = true;
+}
+function mouseUpEvent()
+{
+   mouseDrag = false;
+}
+
+function mouseMoveEvent(e)
+{
+   var rect = canvasId.getBoundingClientRect();
+   var xPos = e.clientX - rect.left - rect.width/2;
+   var yPos = -e.clientY + rect.top + rect.height/2;
+   
+   if (mouseDrag)
+   {
+      //console.log(xPos);
+      //console.log(yPos);
+      
+      var valList = progState.mod_val[1];
+      var moveVal = valList[0];
+      
+      moveVal[0] = xPos;
+      moveVal[1] = yPos;
+      moveVal[2] = 0.0;
+      
+      mainProg(inputState, progState);
+   }
+}
+</script>
+
+</body>
+</html>
+
