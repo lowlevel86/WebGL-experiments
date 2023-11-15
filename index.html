@@ -187,8 +187,8 @@ function InitProg()
 	1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
 	0.0, 1.0, 0.0, 0.0, 1.0, 0.0,
 	0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
-	progState.lines = progState.lines.concat(axis_lines);
-	progState.line_vcols = progState.line_vcols.concat(axis_line_vcols);
+	progState.lines = axis_lines;
+	progState.line_vcols = axis_line_vcols;
    
    
 	progState.points = getPlane(4, 500);
