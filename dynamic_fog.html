@@ -1,0 +1,559 @@
+<html>
+<head>
+<title>Dynamic Fog</title>
+</head>
+<body onload="InitProg();" onresize="InitProg();">
+
+<center>
+<div id="canvasFrameId" style="display:inline-block; width:95%; height:95%; overflow:hidden; border:1px solid #888; text-align:center; margin-bottom:4px;">
+	<canvas id="canvasId">Your browser does not support HTML5</canvas>
+</div>
+</center>
+
+<!-- vertex shader -->
+<script id="vertexShaderText" type="x-shader/x-vertex">
+precision mediump float;
+
+attribute vec3 vertPosition;
+attribute vec3 vertColor;
+varying vec3 fragColor;
+
+uniform vec2 win;
+uniform vec3 view;
+
+void main()
+{
+	float persp = 1.0;
+	fragColor = vertColor;
+
+	if (view[0] != 0.0) // if not in orthographic mode
+	persp = (view[0] - (vertPosition.z - view[1])) / view[0];
+
+	gl_Position = vec4(vertPosition.x*win.x, vertPosition.y*win.y,
+					      (vertPosition.z - view[1]) / view[2], persp);
+
+	gl_PointSize = 2.0;
+}
+</script>
+
+<!-- fragment shader -->
+<script id="fragmentShaderText" type="x-shader/x-fragment">
+precision mediump float;
+
+// Passed in from the vertex shader.
+varying vec3 fragColor;
+
+uniform vec2 win;
+uniform vec3 view;
+float pi = 3.14159265358979323846264338327950288;
+
+// pfad (poly face axis direction)
+// xy = 0
+// xz = 1
+// yz = 2
+vec4 dFog(float x, float y, float z, vec4 pixColor, vec4 fogColor,
+          float fogStart, float fogEnd, float fogFreq, float fogIntensity, int pfad)
+{
+   float fogDensity;
+   
+   if ((z < fogStart) && (z > fogEnd))
+   {
+      fogDensity = sin(((z - fogEnd) / (fogStart - fogEnd)) * pi) * fogIntensity;
+      
+      if ((pfad == 0) || (pfad == 1))
+      pixColor = mix(pixColor, fogColor, cos(x * fogFreq * pi) * fogDensity);
+      
+      if ((pfad == 0) || (pfad == 2))
+      pixColor = mix(pixColor, fogColor, cos(y * fogFreq * pi) * fogDensity);
+      
+      if ((pfad == 1) || (pfad == 2))
+      pixColor = mix(pixColor, fogColor, cos(z * fogFreq * pi) * fogDensity);
+   }
+   
+   return pixColor;
+}
+
+void main()
+{
+   float zGl, z;
+   float x, y;
+   
+   // retrieve the fragment's position in view space
+   vec4 fragmentPosition = gl_FragCoord;
+   
+   // reverse the format and prospective to find the z position
+   zGl = fragmentPosition.z * 2.0 - 1.0;
+   
+	if (view[0] != 0.0) // if not in orthographic mode
+   z = (zGl * view[0] * view[2] + zGl * view[1] * view[2] + view[0] * view[1]) / (zGl * view[2] + view[0]);
+   else
+   z = zGl * view[2] + view[1];
+   
+   // find the x and y positions
+   x = fragmentPosition.x - 1.0 / win.x;
+   y = fragmentPosition.y - 1.0 / win.y;
+   
+	if (view[0] != 0.0) // if not in orthographic mode
+   {
+      x *= (view[0] - (z - view[1])) / view[0];
+      y *= (view[0] - (z - view[1])) / view[0];
+   }
+   
+   // dynamic fog
+   vec4 pixColor = vec4(fragColor, 1.0);
+   float xFogAlpha, yFogAlpha, zFogAlpha;
+   float fogStart, fogEnd;
+   float fogIntensity;
+   float fogFreq;
+   
+   vec4 fogColor = vec4(0.0, 0.0, 0.0, 1.0);
+   fogIntensity = 0.5;
+   
+   // close
+   fogStart = 2800.0;
+   fogEnd = 0.0;
+   fogFreq = 1.0 / 10.0;
+   
+   if (fragColor[0] == 0.9)
+   pixColor = dFog(x, y, z, pixColor, fogColor,
+               fogStart, fogEnd, fogFreq, fogIntensity, 0);
+   else
+   pixColor = dFog(x, y, z, pixColor, fogColor,
+               fogStart, fogEnd, fogFreq, fogIntensity, 1);
+   
+   // mid range
+   fogStart = 1200.0;
+   fogEnd = -2500.0;
+   fogFreq = 1.0 / 100.0;
+   
+   if (fragColor[0] == 0.9)
+   pixColor = dFog(x, y, z, pixColor, fogColor,
+               fogStart, fogEnd, fogFreq, fogIntensity, 0);
+   else
+   pixColor = dFog(x, y, z, pixColor, fogColor,
+               fogStart, fogEnd, fogFreq, fogIntensity, 1);
+   
+   // far
+   fogStart = 10000.0;
+   fogEnd = -80000.0;
+   fogFreq = 0.0;//1.0 / 1000.0;
+   
+   if (fragColor[0] == 0.9)
+   pixColor = dFog(x, y, z, pixColor, fogColor,
+               fogStart, fogEnd, fogFreq, fogIntensity, 0);
+   else
+   pixColor = dFog(x, y, z, pixColor, fogColor,
+               fogStart, fogEnd, fogFreq, fogIntensity, 1);
+   
+   gl_FragColor = pixColor;
+}
+</script>
+
+<script type="text/javascript">
+
+function setCameraLens(viewStart, viewEnd, perspect, orthoMode, unitPerPix)
+{
+	var viewDist, zMv, zRsz, d, p, clipFront;
+
+	viewDist = viewStart - viewEnd;
+
+	if (orthoMode) // orthographic perspective
+	{
+		zRsz = viewDist / 2;
+		zMv = (viewStart + viewEnd) / 2;
+		perspect = 0;
+	}
+	else
+	{
+		// inverse of f(x) = y / (y + x) * x + y / (y - x) * x
+		d = viewDist * viewDist;
+		p = perspect * perspect;
+		zRsz = (Math.sqrt(p*p + p*d) - p) / viewDist;
+
+		clipFront = perspect / (perspect + zRsz) * zRsz;
+		zMv = viewStart - clipFront;
+
+		// one unit per pixel if z == 0
+		if (unitPerPix) // view is moved such that one unit == one pixel
+		zMv = 0;
+	}
+	
+	return [perspect, zMv, zRsz]
+}
+
+function drawPoints(pts, vcolor)
+{
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pts), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+	
+	gl.drawArrays(gl.POINTS, 0, pts.length/3);
+}
+
+function drawLines(lines, vcolor)
+{
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lines), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+	
+	gl.drawArrays(gl.LINES, 0, lines.length/3);
+}
+
+function drawTris(tris, vcolor)
+{
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(tris), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+	
+	gl.drawArrays(gl.TRIANGLES, 0, tris.length/3);
+}
+
+var static_drawQuads = {indices:[]};
+function drawQuads(quads, vcolor)
+{
+	var indices = static_drawQuads.indices;
+	var drawBuffSz = quads.length/2;
+	var vCnt = indices.length/6*4;
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+	
+	while (indices.length < drawBuffSz)
+	{
+		indices.push(vCnt+0, vCnt+1, vCnt+2, vCnt+0, vCnt+2, vCnt+3);
+		vCnt += 4;
+	}
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(quads), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+   gl.drawElements(gl.TRIANGLES, drawBuffSz, gl.UNSIGNED_SHORT, 0);
+}
+
+function rotVert(horiP, vertP, t)
+{
+   var h, v;
+   var hUc, vUc;
+   
+   hUc = Math.cos(t);
+   vUc = Math.sin(t);
+   
+   h = vertP * -vUc + horiP * hUc;
+   v = horiP * vUc + vertP * hUc;
+
+   return [h, v];
+}
+
+function rotate(verts, x, y, z)
+{
+	var i;
+
+	x *= (Math.PI / 180.0);
+	y *= (Math.PI / 180.0);
+	z *= (Math.PI / 180.0);
+
+	for (i=0; i < verts.length; i+=3)
+	{
+		[verts[i+1], verts[i+2]] = rotVert(verts[i+1], verts[i+2], x);
+		[verts[i+0], verts[i+2]] = rotVert(verts[i+0], verts[i+2], y);
+		[verts[i+0], verts[i+1]] = rotVert(verts[i+0], verts[i+1], z);
+	}
+}
+
+function move(verts, x, y, z)
+{
+	var i;
+	for (i=0; i < verts.length; i+=3)
+	{
+		verts[i+0] += x;
+		verts[i+1] += y;
+		verts[i+2] += z;
+	}
+}
+
+function resize(verts, x, y, z)
+{
+	var i;
+	for (i=0; i < verts.length; i+=3)
+	{
+		verts[i+0] *= x;
+		verts[i+1] *= y;
+		verts[i+2] *= z;
+	}
+}
+
+function changeColor(vCol, r, g, b)
+{
+	var i;
+	for (i=0; i < vCol.length; i+=3)
+	{
+		vCol[i+0] = r;
+		vCol[i+1] = g;
+		vCol[i+2] = b;
+	}
+}
+
+var program, gl;
+
+var cube_static = [-144, -130, -130, -144, 130, -130, -144, 130, 130, -144, -130, 130, 144, -130, 130, 144, 130, 130, 144, 130, -130, 144, -130, -130, -130, 144, -130, 130, 144, -130, 130, 144, 130, -130, 144, 130, -130, -144, 130, 130, -144, 130, 130, -144, -130, -130, -144, -130, -130, -130, -144, 130, -130, -144, 130, 130, -144, -130, 130, -144, -130, 130, 144, 130, 130, 144, 130, -130, 144, -130, -130, 144];
+var cube_vCol = [0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9];
+
+var cube_rot = [0.0, 0.0, 0.0];
+var cube_loc = [0.0, 0.0, 0.0];
+var cube_size = [1.0, 1.0, 1.0];
+
+var plane_static = [1, 0, 0,  1, 0, 1,  0, 0, 1,  0, 0, 0];
+var plane_vCol = [0.92, 0.92, 0.92,  0.92, 0.92, 0.92,  0.92, 0.92, 0.92,  0.92, 0.92, 0.92];
+
+// render variables
+var ren = {
+   viewBgn:undefined,
+   viewEnd:undefined,
+   persp:undefined,
+   orth:undefined,
+   unitPerPix:undefined
+};
+
+function InitProg()
+{
+	var canvasFrame = document.getElementById("canvasFrameId");
+	var canvas = document.getElementById("canvasId");
+	canvas.width = canvasFrame.clientWidth;
+	canvas.height = canvasFrame.clientHeight;
+
+	gl = canvas.getContext('webgl', {preserveDrawingBuffer:true});
+	if (!gl) {
+		console.log('WebGL not supported, falling back on experimental-webgl');
+		gl = canvas.getContext('experimental-webgl');
+		return;
+	}
+
+	if (!gl) {
+		alert('Your browser does not support WebGL');
+		return;
+	}
+
+	// create shaders
+	var vertexShader = gl.createShader(gl.VERTEX_SHADER);
+	var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+
+	gl.shaderSource(vertexShader, document.getElementById("vertexShaderText").innerHTML);
+	gl.shaderSource(fragmentShader, document.getElementById("fragmentShaderText").innerHTML);
+
+	gl.compileShader(vertexShader);
+	if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+		console.error('ERROR compiling vertex shader!', gl.getShaderInfoLog(vertexShader));
+		return;
+	}
+
+	gl.compileShader(fragmentShader);
+	if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+		console.error('ERROR compiling fragment shader!', gl.getShaderInfoLog(fragmentShader));
+		return;
+	}
+
+	program = gl.createProgram();
+	gl.attachShader(program, vertexShader);
+	gl.attachShader(program, fragmentShader);
+	gl.linkProgram(program);
+	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+		console.error('ERROR linking program!', gl.getProgramInfoLog(program));
+		return;
+	}
+	gl.validateProgram(program);
+	if (!gl.getProgramParameter(program, gl.VALIDATE_STATUS)) {
+		console.error('ERROR validating program!', gl.getProgramInfoLog(program));
+		return;
+	}
+
+	gl.clearDepth(-1.0);
+	gl.depthFunc(gl.GEQUAL);
+	gl.viewport(0.0, 0.0, gl.canvas.width, gl.canvas.height);
+	
+	gl.enable(gl.CULL_FACE);
+	gl.cullFace(gl.FRONT);
+
+	gl.useProgram(program);
+	gl.uniform2f(gl.getUniformLocation(program, "win"), 2.0/gl.canvas.width, 2.0/gl.canvas.height);
+
+	mainProg();
+}
+
+function mainProg()
+{
+	if (!gl)
+	return;
+
+   ren.viewBgn = 800;
+   ren.viewEnd = -500000;
+   ren.persp = 310;
+   ren.orth = false;
+   ren.unitPerPix = false;
+
+	gl.clearColor(0.75, 0.85, 0.8, 1.0);
+	gl.clearColor(0.0, 0.0, 0.0, 1.0);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+   var lensSettings = setCameraLens(ren.viewBgn, ren.viewEnd, ren.persp, ren.orth, ren.unitPerPix);
+	gl.uniform3fv(gl.getUniformLocation(program, "view"), lensSettings);
+	gl.enable(gl.DEPTH_TEST);
+
+   // copy normalized meshes for modification
+   var cube = Array.from(cube_static);
+   
+   rotate(cube, cube_rot[0], cube_rot[1], cube_rot[2]);
+   move(cube, cube_loc[0], cube_loc[1], cube_loc[2]);
+   
+   drawQuads(cube, cube_vCol);
+   
+   var floor;
+
+   // front section
+   floor = Array.from(plane_static);
+   resize(floor, 500000, 0, 500000);
+   move(floor, -500000/2, 0, -500000/2);
+   //rotate(floor, 20, 0, 0);
+   
+   move(floor, 0, -200, 0); // move down
+   drawQuads(floor, plane_vCol);
+}
+
+function keyDownEvent(e)
+{
+   var vert = 0.0, hori = 0.0, forwardBack = 0.0;
+   var leftRight = 0.0, upDown = 0.0;
+   
+	if (e.keyCode == 65) // a
+   leftRight -= 5.0;
+	if (e.keyCode == 68) // d
+   leftRight += 5.0;
+   
+	if (e.keyCode == 87) // w
+   upDown += 5.0;
+	if (e.keyCode == 83) // s
+   upDown -= 5.0;
+   
+	if (e.keyCode == 37) // l
+	vert += 5.0;
+	if (e.keyCode == 39) // r
+	vert -= 5.0;
+	if (e.keyCode == 38) // u
+	hori -= 5.0;
+	if (e.keyCode == 40) // d
+	hori += 5.0;
+
+	if (e.keyCode == 70) // f
+	forwardBack += 15.0;
+	if (e.keyCode == 66) // b
+	forwardBack -= 15.0;
+
+   cube_rot[0] += hori;
+   cube_rot[1] += vert;
+   
+   cube_loc[0] += leftRight;
+   cube_loc[1] += upDown;
+   cube_loc[2] += forwardBack;
+   
+	mainProg();
+}
+
+function keyUpEvent(e)
+{
+	mainProg();
+}
+
+var xPos_prior = 0, yPos_prior = 0;
+function mouseMoveEvent(e)
+{
+   var rect = canvasId.getBoundingClientRect();
+   var xPos = e.clientX - rect.left - rect.width/2;
+   var yPos = -e.clientY + rect.top + rect.height/2;
+   
+   if (mouseDrag)
+   {
+      cube_rot[1] -= xPos - xPos_prior;
+      cube_rot[0] -= yPos - yPos_prior;
+      mainProg();
+   }
+   
+   xPos_prior = xPos;
+   yPos_prior = yPos;
+}
+
+var mouseDrag = false;
+function mouseDownEvent(e)
+{
+   mouseDrag = true;
+   
+   mouseMoveEvent(e);
+}
+function mouseUpEvent()
+{
+   mouseDrag = false;
+}
+
+var xTilt_prior = 0, yTilt_prior = 0;
+function tiltEvent()
+{
+   var xTilt = event.accelerationIncludingGravity.x;
+   var yTilt = event.accelerationIncludingGravity.y;
+   var zTilt = event.accelerationIncludingGravity.z;
+
+   cube_rot[0] += xTilt - xTilt_prior;
+   cube_rot[1] += yTilt - yTilt_prior;
+   mainProg();
+}
+
+window.onmousemove = mouseMoveEvent;
+window.onmousedown = mouseDownEvent;
+window.onmouseup = mouseUpEvent;
+
+window.onkeydown = keyDownEvent;
+window.onkeyup = keyUpEvent;
+
+if (window.DeviceMotionEvent)
+window.addEventListener('devicemotion', tiltEvent);
+</script>
+
+</body>
+</html>
+
