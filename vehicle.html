@@ -1,0 +1,947 @@
+<html>
+<head>
+<title>Vehicle</title>
+</head>
+<body onload="InitProg();" onresize="InitProg();">
+
+<center>
+<div id="canvasFrameId" style="display:inline-block; width:95%; height:95%; overflow:hidden; border:1px solid #888; text-align:center; margin-bottom:4px;">
+	<canvas id="canvasId">Your browser does not support HTML5</canvas>
+</div>
+</center>
+
+<script type="text/javascript" src="vehicle.js"></script>
+
+<!-- vertex shader -->
+<script id="vertexShaderText" type="x-shader/x-vertex">
+precision mediump float;
+
+attribute vec3 vertPosition;
+attribute vec3 vertColor;
+varying vec3 fragColor;
+
+uniform vec2 win;
+uniform vec3 view;
+
+void main()
+{
+	float persp = 1.0;
+	fragColor = vertColor;
+
+	if (view[0] != 0.0) // if not in orthographic mode
+	persp = (view[0] - (vertPosition.z - view[1])) / view[0];
+
+	gl_Position = vec4(vertPosition.x*win.x, vertPosition.y*win.y,
+					      (vertPosition.z - view[1]) / view[2], persp);
+
+	gl_PointSize = 2.0;
+}
+</script>
+
+<!-- fragment shader -->
+<script id="fragmentShaderText" type="x-shader/x-fragment">
+precision mediump float;
+
+// Passed in from the vertex shader.
+varying vec3 fragColor;
+
+uniform vec2 win;
+uniform vec3 view;
+
+void main()
+{
+   float zGl, z;
+   float x, y;
+   
+   // retrieve the fragment's position in view space
+   vec4 fragmentPosition = gl_FragCoord;
+   
+   // reverse the format and prospective to find the z position
+   zGl = fragmentPosition.z * 2.0 - 1.0;
+   
+	if (view[0] != 0.0) // if not in orthographic mode
+   z = (zGl * view[0] * view[2] + zGl * view[1] * view[2] + view[0] * view[1]) / (zGl * view[2] + view[0]);
+   else
+   z = zGl * view[2] + view[1];
+   
+   // find the x and y positions
+   x = fragmentPosition.x - 1.0 / win.x;
+   y = fragmentPosition.y - 1.0 / win.y;
+   
+	if (view[0] != 0.0) // if not in orthographic mode
+   {
+      x *= (view[0] - (z - view[1])) / view[0];
+      y *= (view[0] - (z - view[1])) / view[0];
+   }
+   
+   gl_FragColor = vec4(fragColor, 1.0);
+}
+</script>
+
+<script type="text/javascript">
+
+function setCameraLens(viewStart, viewEnd, perspect, orthoMode, unitPerPix)
+{
+	var viewDist, zMv, zRsz, d, p, clipFront;
+
+	viewDist = viewStart - viewEnd;
+
+	if (orthoMode) // orthographic perspective
+	{
+		zRsz = viewDist / 2;
+		zMv = (viewStart + viewEnd) / 2;
+		perspect = 0;
+	}
+	else
+	{
+		// inverse of f(x) = y / (y + x) * x + y / (y - x) * x
+		d = viewDist * viewDist;
+		p = perspect * perspect;
+		zRsz = (Math.sqrt(p*p + p*d) - p) / viewDist;
+
+		clipFront = perspect / (perspect + zRsz) * zRsz;
+		zMv = viewStart - clipFront;
+
+		// one unit per pixel if z == 0
+		if (unitPerPix) // view is moved such that one unit == one pixel
+		zMv = 0;
+	}
+	
+	return [perspect, zMv, zRsz]
+}
+
+function drawPoints(pts, vcolor)
+{
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pts), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+	
+	gl.drawArrays(gl.POINTS, 0, pts.length/3);
+}
+
+function drawLines(lines, vcolor)
+{
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lines), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+	
+	gl.drawArrays(gl.LINES, 0, lines.length/3);
+}
+
+function drawTris(tris, vcolor)
+{
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(tris), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+	
+	gl.drawArrays(gl.TRIANGLES, 0, tris.length/3);
+}
+
+var static_drawQuads = {indices:[]};
+function drawQuads(quads, vcolor)
+{
+	var indices = static_drawQuads.indices;
+	var drawBuffSz = quads.length/2;
+	var vCnt = indices.length/6*4;
+	var positionAttribLocation = gl.getAttribLocation(program, 'vertPosition');
+	var colorAttribLocation = gl.getAttribLocation(program, 'vertColor');
+	
+	while (indices.length < drawBuffSz)
+	{
+		indices.push(vCnt+0, vCnt+1, vCnt+2, vCnt+0, vCnt+2, vCnt+3);
+		vCnt += 4;
+	}
+
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(quads), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(positionAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vcolor), gl.STATIC_DRAW);
+	gl.vertexAttribPointer(colorAttribLocation, 3, gl.FLOAT, gl.FALSE, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+
+	gl.enableVertexAttribArray(positionAttribLocation);
+	gl.enableVertexAttribArray(colorAttribLocation);
+   gl.drawElements(gl.TRIANGLES, drawBuffSz, gl.UNSIGNED_SHORT, 0);
+}
+
+function rotVert(horiP, vertP, t)
+{
+   var h, v;
+   var hUc, vUc;
+   
+   hUc = Math.cos(t);
+   vUc = Math.sin(t);
+   
+   h = vertP * -vUc + horiP * hUc;
+   v = horiP * vUc + vertP * hUc;
+
+   return [h, v];
+}
+
+function rotate(verts, x, y, z)
+{
+	var i;
+
+	x *= (Math.PI / 180.0);
+	y *= (Math.PI / 180.0);
+	z *= (Math.PI / 180.0);
+
+	for (i=0; i < verts.length; i+=3)
+	{
+		[verts[i+1], verts[i+2]] = rotVert(verts[i+1], verts[i+2], x);
+		[verts[i+0], verts[i+2]] = rotVert(verts[i+0], verts[i+2], y);
+		[verts[i+0], verts[i+1]] = rotVert(verts[i+0], verts[i+1], z);
+	}
+}
+
+function move(verts, x, y, z)
+{
+	var i;
+	for (i=0; i < verts.length; i+=3)
+	{
+		verts[i+0] += x;
+		verts[i+1] += y;
+		verts[i+2] += z;
+	}
+}
+
+function resize(verts, x, y, z)
+{
+	var i;
+	for (i=0; i < verts.length; i+=3)
+	{
+		verts[i+0] *= x;
+		verts[i+1] *= y;
+		verts[i+2] *= z;
+	}
+}
+
+function changeColor(vCol, r, g, b)
+{
+	var i;
+	for (i=0; i < vCol.length; i+=3)
+	{
+		vCol[i+0] = r;
+		vCol[i+1] = g;
+		vCol[i+2] = b;
+	}
+}
+
+var i;
+var program, gl;
+
+var cam_rot = [35.0, 90.0, 0.0];
+var cam_loc = [0.0, -500.0, -1500.0];
+var cam_size = [1.0, 1.0, 1.0];
+
+var plane_static = [0, 0, 0,  0, 0, 1,  1, 0, 1,  1, 0, 0];
+var light_vCol = [0.92, 0.92, 0.92,  0.92, 0.92, 0.92,  0.92, 0.92, 0.92,  0.92, 0.92, 0.92];
+var dark_vCol = [0.2, 0.2, 0.2,  0.2, 0.2, 0.2,  0.2, 0.2, 0.2,  0.2, 0.2, 0.2];
+
+var scene_scale = 100.0;
+var tire_radius = back_wheels_TD[7] * scene_scale;
+console.log("tire radius is:", tire_radius, "units or 0.75ft");
+var one_foot_length = tire_radius / 0.75;
+console.log("1 Foot is equal to", one_foot_length, "units");
+var max_vehicle_speed = 15 * one_foot_length;
+console.log("max vehicle speed is:", max_vehicle_speed, "units/sec or 15 ft/sec or about 10 mph");
+
+var plane = [];
+var floor_static = [];
+var floor_vCol = [];
+for (i=-10; i < 10; i++)
+for (j=-10; j < 10; j++)
+{
+   plane = [...plane_static];
+   move(plane, i, 0, j);
+   floor_static = floor_static.concat(plane);
+   
+   if ((i&1)^(j&1))
+   floor_vCol = floor_vCol.concat(light_vCol);
+   else
+   floor_vCol = floor_vCol.concat(dark_vCol);
+}
+resize(floor_static, one_foot_length*3, 0, one_foot_length*3);
+console.log("One tile is one yard or 3 feet");
+
+var steeringWheelAngle = 0.0;
+var vehicleSpeed = 0.0;
+var vehicleSpeed_prior = 0.0;
+
+var floor_xLoc = 0.0;
+var floor_zLoc = 0.0;
+var floor_rot = 0.0;
+
+var body_edges_vCol = Array(body_edges.length).fill(0.0);
+var steering_wheel_edges_vCol = Array(steering_wheel_edges.length).fill(0.0);
+
+// user interface data
+var arrow_static = [
+2.000000, 0.000000, 2.000000,
+-2.000000, 0.000000, 2.000000,
+2.000000, 0.000000, -0.000000,
+2.000000, 0.000000, 2.000000,
+-2.000000, 0.000000, 2.000000,
+-2.000000, 0.000000, -0.000000,
+2.000000, 0.000000, -0.000000,
+4.000000, 0.000000, -0.000000,
+-2.000000, 0.000000, -0.000000,
+-4.000000, 0.000000, -0.000000,
+4.000000, 0.000000, -0.000000,
+0.000000, 0.000000, -2.000000,
+-4.000000, 0.000000, -0.000000,
+0.000000, 0.000000, -2.000000,
+];
+rotate(arrow_static, 90, 0, 0);
+
+var btnsUI = [];
+var btnsUI_vCol = [];
+
+// render variables
+var ren = {
+   viewBgn:undefined,
+   viewEnd:undefined,
+   persp:undefined,
+   orth:undefined,
+   unitPerPix:undefined
+};
+
+function InitProg()
+{
+	var canvasFrame = document.getElementById("canvasFrameId");
+	var canvas = document.getElementById("canvasId");
+	canvas.width = canvasFrame.clientWidth;
+	canvas.height = canvasFrame.clientHeight;
+
+	gl = canvas.getContext('webgl', {preserveDrawingBuffer:true});
+	if (!gl) {
+		console.log('WebGL not supported, falling back on experimental-webgl');
+		gl = canvas.getContext('experimental-webgl');
+		return;
+	}
+
+	if (!gl) {
+		alert('Your browser does not support WebGL');
+		return;
+	}
+
+	// create shaders
+	var vertexShader = gl.createShader(gl.VERTEX_SHADER);
+	var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+
+	gl.shaderSource(vertexShader, document.getElementById("vertexShaderText").innerHTML);
+	gl.shaderSource(fragmentShader, document.getElementById("fragmentShaderText").innerHTML);
+
+	gl.compileShader(vertexShader);
+	if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+		console.error('ERROR compiling vertex shader!', gl.getShaderInfoLog(vertexShader));
+		return;
+	}
+
+	gl.compileShader(fragmentShader);
+	if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+		console.error('ERROR compiling fragment shader!', gl.getShaderInfoLog(fragmentShader));
+		return;
+	}
+
+	program = gl.createProgram();
+	gl.attachShader(program, vertexShader);
+	gl.attachShader(program, fragmentShader);
+	gl.linkProgram(program);
+	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+		console.error('ERROR linking program!', gl.getProgramInfoLog(program));
+		return;
+	}
+	gl.validateProgram(program);
+	if (!gl.getProgramParameter(program, gl.VALIDATE_STATUS)) {
+		console.error('ERROR validating program!', gl.getProgramInfoLog(program));
+		return;
+	}
+
+	gl.clearDepth(-1.0);
+	gl.depthFunc(gl.GEQUAL);
+	gl.viewport(0.0, 0.0, gl.canvas.width, gl.canvas.height);
+	
+	gl.enable(gl.CULL_FACE);
+	gl.cullFace(gl.BACK);
+
+   gl.blendFunc(gl.SRC_ALPHA, gl.SRC_ALPHA);
+   
+	gl.useProgram(program);
+	gl.uniform2f(gl.getUniformLocation(program, "win"), 2.0/gl.canvas.width, 2.0/gl.canvas.height);
+
+   
+   // create user interface buttons
+   
+   // create top and bottom lines
+   var topLine = [-gl.canvas.width/2.1, gl.canvas.height/4.0, 0,
+                 gl.canvas.width/2.1, gl.canvas.height/4.0, 0];
+   var bottomLine = [...topLine];
+   rotate(bottomLine, 180, 0, 0);
+
+   // create left and right lines
+   var leftLine = [gl.canvas.width/4.0, -gl.canvas.height/5.0, 0,
+                   gl.canvas.width/4.0, gl.canvas.height/5.0, 0];
+   var rightLine = [-gl.canvas.width/4.0, -gl.canvas.height/5.0, 0,
+                    -gl.canvas.width/4.0, gl.canvas.height/5.0, 0];
+
+   // create the top arrow
+   var topArrow = [...arrow_static];
+   resize(topArrow, gl.canvas.height/32.0, gl.canvas.height/32.0, gl.canvas.height/32.0);
+   move(topArrow, 0, gl.canvas.height/8.0 * 3, 0);
+
+   // create the bottom arrow
+   var bottomArrow = [...topArrow];
+   rotate(bottomArrow, 180, 0, 0);
+
+   // create the left arrow
+   var leftArrow = [...arrow_static];
+   rotate(leftArrow, 0, 0, 90);
+   resize(leftArrow, gl.canvas.height/32.0, gl.canvas.height/32.0, gl.canvas.height/32.0);
+   move(leftArrow, -gl.canvas.width/8.0 * 3, 0, 0);
+
+   // create the right arrow
+   var rightArrow = [...leftArrow];
+   rotate(leftArrow, 0, 0, 180);
+
+   btnsUI = [...topLine, ...bottomLine, ...leftLine, ...rightLine,
+             ...topArrow, ...bottomArrow, ...leftArrow, ...rightArrow];
+
+   // create vertex color
+   for (i=0; i < btnsUI.length/3; i++)
+   btnsUI_vCol.push(1.0, 0.0, 0.0);
+
+
+	mainProg();
+}
+
+function mainProg()
+{
+   var i;
+   
+	if (!gl)
+	return;
+
+   ren.viewBgn = 1600;
+   ren.viewEnd = -500000;
+   ren.persp = 410;
+   ren.orth = false;
+   ren.unitPerPix = true;
+
+	gl.clearColor(0.0, 1.0, 1.0, 1.0);
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+   var lensSettings = setCameraLens(ren.viewBgn, ren.viewEnd, ren.persp, ren.orth, ren.unitPerPix);
+	gl.uniform3fv(gl.getUniformLocation(program, "view"), lensSettings);
+	gl.enable(gl.DEPTH_TEST);
+   gl.disable(gl.BLEND);
+   
+   
+   var floor = [...floor_static];
+   
+   var floor_width = one_foot_length * 3 * 10;
+   
+   if (floor_xLoc > floor_width)
+   floor_xLoc -= floor_width*2;
+   
+   if (floor_xLoc < -floor_width)
+   floor_xLoc += floor_width*2;
+   
+   if (floor_zLoc > floor_width)
+   floor_zLoc -= floor_width*2;
+   
+   if (floor_zLoc < -floor_width)
+   floor_zLoc += floor_width*2;
+   
+   move(floor, floor_xLoc, 0, floor_zLoc);
+   
+   var travel_distance = vehicleSpeed / 15.0; // units per second / frame count
+   var direction_angle = (steeringWheelAngle / 450.0) * 50; // front wheel angle 50 degrees
+   
+   
+   // calculate how much the vehicle will turn
+   var rot_travel = direction_angle / 90; // 100% rotational travel if the front wheels were 90 degrees
+   var circumference_travel = travel_distance * (360 / (back_wheels_TD[6] * 100 * 2 * Math.PI));
+   floor_rot += circumference_travel * rot_travel;
+   move(floor, -back_wheels_TD[6]*100, 0, 0);
+   rotate(floor, 0, floor_rot, 0);
+   move(floor, back_wheels_TD[6]*100, 0, 0);
+   
+   
+   // calculate vehicle position
+   var foward_travel = travel_distance * (1 - Math.abs(rot_travel));
+   floor_xLoc += foward_travel * Math.cos(floor_rot * (Math.PI / 180.0));
+   floor_zLoc += -foward_travel * Math.sin(floor_rot * (Math.PI / 180.0));
+   
+   rotate(floor, 0, cam_rot[1], 0);
+   rotate(floor, cam_rot[0], 0, 0);
+   move(floor, cam_loc[0], cam_loc[1], cam_loc[2]);
+   
+   drawQuads(floor, floor_vCol);
+   
+   
+   // copy into an double array
+   var quads = [
+   [...back_wheels_quad],
+   [...brake_quad],
+   [...front_left_wheel_quad],
+   [...front_right_wheel_quad],
+   [...gas_quad],
+   [...left_motor_quad],
+   [...right_motor_quad],
+   [...steerA_quad],
+   [...steerB_quad],
+   [...steering_wheel_quad]
+   ];
+   
+   // create a "pointer" like double array
+   var quads_vCol = [];
+   quads_vCol.push(back_wheels_quad_vcol);
+   quads_vCol.push(brake_quad_vcol);
+   quads_vCol.push(front_left_wheel_quad_vcol);
+   quads_vCol.push(front_right_wheel_quad_vcol);
+   quads_vCol.push(gas_quad_vcol);
+   quads_vCol.push(left_motor_quad_vcol);
+   quads_vCol.push(right_motor_quad_vcol);
+   quads_vCol.push(steerA_quad_vcol);
+   quads_vCol.push(steerB_quad_vcol);
+   quads_vCol.push(steering_wheel_quad_vcol);
+
+
+   // copy into an double array
+   var tris = [
+   [...back_wheels_tri],
+   [...brake_tri],
+   [...front_left_wheel_tri],
+   [...front_right_wheel_tri],
+   [...gas_tri],
+   [...left_motor_tri],
+   [...right_motor_tri],
+   [...steerA_tri],
+   [...steerB_tri],
+   [...steering_wheel_tri]
+   ];
+   
+   // create a "pointer" like double array
+   var tris_vCol = [];
+   tris_vCol.push(back_wheels_tri_vcol);
+   tris_vCol.push(brake_tri_vcol);
+   tris_vCol.push(front_left_wheel_tri_vcol);
+   tris_vCol.push(front_right_wheel_tri_vcol);
+   tris_vCol.push(gas_tri_vcol);
+   tris_vCol.push(left_motor_tri_vcol);
+   tris_vCol.push(right_motor_tri_vcol);
+   tris_vCol.push(steerA_tri_vcol);
+   tris_vCol.push(steerB_tri_vcol);
+   tris_vCol.push(steering_wheel_tri_vcol);
+   
+
+   // create a "pointer" like double array
+   var szRotLoc_TD = [];
+   szRotLoc_TD.push(back_wheels_TD);
+   szRotLoc_TD.push(brake_TD);
+   szRotLoc_TD.push(front_left_wheel_TD);
+   szRotLoc_TD.push(front_right_wheel_TD);
+   szRotLoc_TD.push(gas_TD);
+   szRotLoc_TD.push(left_motor_TD);
+   szRotLoc_TD.push(right_motor_TD);
+   szRotLoc_TD.push(steerA_TD);
+   szRotLoc_TD.push(steerB_TD);
+   szRotLoc_TD.push(steering_wheel_TD);
+   
+   
+   // turn gas pedal green as speed increases
+   var g = Math.abs(vehicleSpeed) / max_vehicle_speed;
+   gas_quad_vcol[1] = g; gas_quad_vcol[4] = g;
+   gas_quad_vcol[7] = g; gas_quad_vcol[10] = g;
+   
+   // turn brake pedal red when press
+   if (Math.abs(vehicleSpeed) < vehicleSpeed_prior)
+   {
+      brake_quad_vcol[0] = 1; brake_quad_vcol[3] = 1;
+      brake_quad_vcol[6] = 1; brake_quad_vcol[9] = 1;
+   }
+   else
+   {
+      brake_quad_vcol[0] = 0; brake_quad_vcol[3] = 0;
+      brake_quad_vcol[6] = 0; brake_quad_vcol[9] = 0;
+   }
+   vehicleSpeed_prior = Math.abs(vehicleSpeed);
+   
+   
+   var tire_circumference = tire_radius * 2 * Math.PI;
+   var tire_rot_angle = foward_travel * 360.0 / tire_circumference;
+   
+   //console.log(vehicleSpeed / one_foot_length, "ft/sec");
+   
+   front_left_wheel_TD[5] += tire_rot_angle;
+   front_right_wheel_TD[5] += tire_rot_angle;
+   back_wheels_TD[5] += tire_rot_angle;
+   
+   // steering
+   steering_wheel_TD[3] = steeringWheelAngle;
+   
+   front_left_wheel_TD[4] = -(steeringWheelAngle / 450.0) * 50;
+   left_motor_TD[4] = front_left_wheel_TD[4];
+   front_right_wheel_TD[4] = -(steeringWheelAngle / 450.0) * 50;
+   right_motor_TD[4] = front_right_wheel_TD[4];
+   
+   steerA_TD[6] = -6.79;
+   steerA_TD[6] += Math.abs(steeringWheelAngle / 450.0) * 0.283782;
+   steerA_TD[8] = (steeringWheelAngle / 450.0) * 0.605;
+   
+   steerB_TD[6] = -5.21;
+   steerB_TD[6] -= Math.abs(steeringWheelAngle / 450.0) * 0.283782;
+   steerB_TD[8] = (steeringWheelAngle / 450.0) * -0.605;
+   
+   
+   for (i=0; i < quads.length; i++)
+   {
+      rotate(quads[i], 0, 0, szRotLoc_TD[i][5]);
+      rotate(quads[i], szRotLoc_TD[i][3], szRotLoc_TD[i][4], 0);
+      move(quads[i], szRotLoc_TD[i][6], szRotLoc_TD[i][7], szRotLoc_TD[i][8]);
+      
+      resize(quads[i], 100, 100, 100);
+      rotate(quads[i], 0, cam_rot[1], 0);
+      rotate(quads[i], cam_rot[0], 0, 0);
+      move(quads[i], cam_loc[0], cam_loc[1], cam_loc[2]);
+      
+      drawQuads(quads[i], quads_vCol[i]);
+   }
+   
+   for (i=0; i < tris.length; i++)
+   {
+      rotate(tris[i], 0, 0, szRotLoc_TD[i][5]);
+      rotate(tris[i], szRotLoc_TD[i][3], szRotLoc_TD[i][4], 0);
+      move(tris[i], szRotLoc_TD[i][6], szRotLoc_TD[i][7], szRotLoc_TD[i][8]);
+      
+      resize(tris[i], 100, 100, 100);
+      rotate(tris[i], 0, cam_rot[1], 0);
+      rotate(tris[i], cam_rot[0], 0, 0);
+      move(tris[i], cam_loc[0], cam_loc[1], cam_loc[2]);
+      
+      drawTris(tris[i], tris_vCol[i]);
+   }
+   
+   // draw steering wheel edges
+   var steering_wheel = [...steering_wheel_edges];
+   rotate(steering_wheel, steering_wheel_TD[3], steering_wheel_TD[4], steering_wheel_TD[5]);
+   move(steering_wheel, steering_wheel_TD[6], steering_wheel_TD[7], steering_wheel_TD[8]);
+   resize(steering_wheel, 100, 100, 100);
+   rotate(steering_wheel, 0, cam_rot[1], 0);
+   rotate(steering_wheel, cam_rot[0], 0, 0);
+   move(steering_wheel, cam_loc[0], cam_loc[1], cam_loc[2]);
+   drawLines(steering_wheel, steering_wheel_edges_vCol);
+   
+   // draw body
+   var body = [[...body_quad], [...body_edges]];
+   for (i=0; i < 2; i++)
+   {
+      rotate(body[i], body_TD[3], body_TD[4], body_TD[5]);
+      move(body[i], body_TD[6], body_TD[7], body_TD[8]);
+      
+      resize(body[i], 100, 100, 100);
+      rotate(body[i], 0, cam_rot[1], 0);
+      rotate(body[i], cam_rot[0], 0, 0);
+      move(body[i], cam_loc[0], cam_loc[1], cam_loc[2]);
+   }
+   drawLines(body[1], body_edges_vCol); // draw edges
+   
+   // draw interface
+   gl.disable(gl.DEPTH_TEST);
+   
+   drawLines(btnsUI, btnsUI_vCol);
+   
+   gl.enable(gl.DEPTH_TEST);
+   
+   // draw transparent body
+   gl.enable(gl.BLEND);
+   drawQuads(body[0], body_quad_vcol);
+}
+
+// event handling
+var drive_forward = false;
+var drive_backward = false;
+var steer_left = false;
+var steer_right = false;
+
+var forward_reverse = 0;
+var switch_gears = false;
+
+function perFrameProcessor()
+{
+	if (steer_left)
+   if (steeringWheelAngle < 450)
+   steeringWheelAngle += 25.0;
+   
+	if (steer_right)
+   if (steeringWheelAngle > -450)
+   steeringWheelAngle -= 25.0;
+   
+	if (drive_forward)
+   {
+      if (vehicleSpeed < 0)
+      {
+         vehicleSpeed += 300.0;
+         
+         if (vehicleSpeed > 0)
+         vehicleSpeed = 0;
+      }
+      
+      if (forward_reverse == 0)
+      forward_reverse = 1;
+      
+      if (Math.abs(vehicleSpeed) < max_vehicle_speed)
+      if (vehicleSpeed >= 0)
+      if (forward_reverse == 1)
+      vehicleSpeed += 100.0;
+   }
+   
+	if (drive_backward)
+   {
+      if (vehicleSpeed > 0)
+      {
+         vehicleSpeed -= 300.0;
+         
+         if (vehicleSpeed < 0)
+         vehicleSpeed = 0;
+      }
+      
+      if (forward_reverse == 0)
+      forward_reverse = -1;
+      
+      if (Math.abs(vehicleSpeed) < max_vehicle_speed)
+      if (vehicleSpeed <= 0)
+      if (forward_reverse == -1)
+      vehicleSpeed -= 100.0;
+   }
+   
+   if (switch_gears)
+   {
+      if (!drive_forward)
+      if (vehicleSpeed == 0)
+      forward_reverse = 0;
+      
+      if (!drive_backward)
+      if (vehicleSpeed == 0)
+      forward_reverse = 0;
+      
+      switch_gears = false;
+   }
+   
+   mainProg();
+}
+
+function keyDownEvent(e)
+{
+	if ((e.keyCode == 65) || (e.keyCode == 37)) // a || left
+   steer_left = true;
+	if ((e.keyCode == 68) || (e.keyCode == 39)) // d || right
+   steer_right = true;
+   
+	if ((e.keyCode == 87) || (e.keyCode == 38)) // w || up
+   drive_forward = true;
+	if ((e.keyCode == 83) || (e.keyCode == 40)) // s || left
+   drive_backward = true;
+   
+	if (e.keyCode == 187) // +
+	cam_loc[2] += 50.0;
+	if (e.keyCode == 189) // -
+	cam_loc[2] -= 50.0;
+}
+
+function keyUpEvent(e)
+{
+	if ((e.keyCode == 65) || (e.keyCode == 37)) // a || left
+   steer_left = false;
+	if ((e.keyCode == 68) || (e.keyCode == 39)) // d || right
+   steer_right = false;
+   
+	if ((e.keyCode == 87) || (e.keyCode == 38)) // w || up
+   {
+      drive_forward = false;
+      switch_gears = true;
+   }
+   
+	if ((e.keyCode == 83) || (e.keyCode == 40)) // s || down
+   {
+      drive_backward = false;
+      switch_gears = true;
+   }
+}
+
+function mouseWheelEvent(event)
+{
+   var delta = Math.max(-1, Math.min(1, (event.wheelDelta || -event.deltaY || -event.detail)));
+
+   if (delta < 0)
+   cam_loc[2] -= 30.0;
+   else
+   cam_loc[2] += 30.0;
+   
+   event.preventDefault();
+}
+
+var xPos_prior = 0, yPos_prior = 0;
+var mouseDown = false;
+function mouseMoveEvent(e)
+{
+   var rect = canvasId.getBoundingClientRect();
+   var xPos = e.clientX - rect.left - rect.width/2;
+   var yPos = -e.clientY + rect.top + rect.height/2;
+   
+   if (mouseDown)
+   {
+      cam_rot[1] -= xPos - xPos_prior;
+      cam_rot[0] -= yPos - yPos_prior;
+   }
+   
+   if (mouseDown)
+   {
+      if (yPos > gl.canvas.height/4.0)
+      drive_forward = true;
+      
+      if (yPos < -gl.canvas.height/4.0)
+      drive_backward = true;
+      
+      if ((yPos < gl.canvas.height/4.0) && (yPos > -gl.canvas.height/4.0))
+      {
+         if (xPos > gl.canvas.width/4.0)
+         steer_right = true;
+         
+         if (xPos < -gl.canvas.width/4.0)
+         steer_left = true;
+      }
+   }
+   
+   xPos_prior = xPos;
+   yPos_prior = yPos;
+}
+
+function mouseDownEvent(e)
+{
+   mouseDown = true;
+   mouseMoveEvent(e);
+}
+function mouseUpEvent()
+{
+   mouseDown = false;
+   drive_forward = false;
+   drive_backward = false;
+   steer_right = false;
+   steer_left = false;
+   switch_gears = true;
+}
+
+
+function touchMoveEvent(e)
+{
+   var rect = canvasId.getBoundingClientRect();
+   var xPos = e.touches[0].clientX - rect.left - rect.width/2;
+   var yPos = -e.touches[0].clientY + rect.top + rect.height/2;
+
+   cam_rot[1] -= (xPos - xPos_prior) * 0.1;
+   cam_rot[0] -= (yPos - yPos_prior) * 0.1;
+
+   xPos_prior = xPos;
+   yPos_prior = yPos;
+}
+
+function touchStartEvent(e)
+{
+   var i, xPos, yPos;
+   var rect = canvasId.getBoundingClientRect();
+   
+   e.preventDefault();
+
+   for (i=0; i < e.touches.length; i++)
+   {
+      xPos = e.touches[i].clientX - rect.left - rect.width/2;
+      yPos = -e.touches[i].clientY + rect.top + rect.height/2;
+      
+      if (yPos > gl.canvas.height/4.0)
+      drive_forward = true;
+      
+      if (yPos < -gl.canvas.height/4.0)
+      drive_backward = true;
+      
+      if ((yPos < gl.canvas.height/4.0) && (yPos > -gl.canvas.height/4.0))
+      {
+         if (xPos > gl.canvas.width/4.0)
+         steer_right = true;
+         
+         if (xPos < -gl.canvas.width/4.0)
+         steer_left = true;
+      }
+   }
+   
+   xPos_prior = xPos;
+   yPos_prior = yPos;
+}
+function touchEndEvent(e)
+{
+   mouseDown = false;
+   drive_forward = false;
+   drive_backward = false;
+   steer_right = false;
+   steer_left = false;
+   switch_gears = true;
+}
+
+
+//if (window.addEventListener)
+window.addEventListener('wheel', mouseWheelEvent);
+
+
+window.onmousemove = mouseMoveEvent;
+window.onmousedown = mouseDownEvent;
+window.onmouseup = mouseUpEvent;
+
+window.onkeydown = keyDownEvent;
+window.onkeyup = keyUpEvent;
+
+window.addEventListener('touchmove', touchMoveEvent);
+window.addEventListener('touchstart', touchStartEvent);
+window.addEventListener('touchend', touchEndEvent);
+
+
+setInterval(perFrameProcessor, 1000.0/15);
+
+</script>
+
+</body>
+</html>
