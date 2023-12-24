@@ -393,15 +393,17 @@ function mouseUpEvent()
    mouseDrag = false;
 }
 
-var xTilt_prior = 0, yTilt_prior = 0;
 function tiltEvent()
 {
    var xTilt = event.accelerationIncludingGravity.x;
    var yTilt = event.accelerationIncludingGravity.y;
-   var zTilt = event.accelerationIncludingGravity.z;
+   //var zTilt = event.accelerationIncludingGravity.z;
 
-   cube_rot[0] += xTilt - xTilt_prior;
-   cube_rot[1] += yTilt - yTilt_prior;
+   console.log("x", xTilt);
+   console.log("y", yTilt);
+
+   cube_rot[0] = xTilt;
+   cube_rot[1] = yTilt;
    mainProg();
 }
 
