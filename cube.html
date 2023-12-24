@@ -393,7 +393,7 @@ function mouseUpEvent()
    mouseDrag = false;
 }
 
-function tiltEvent()
+/*function tiltEvent()
 {
    var xTilt = event.accelerationIncludingGravity.x;
    var yTilt = event.accelerationIncludingGravity.y;
@@ -405,8 +405,21 @@ function tiltEvent()
    cube_rot[0] = xTilt;
    cube_rot[1] = yTilt;
    mainProg();
-}
+}*/
 
+function tiltEvent(e)
+{
+   var xTilt = e.gamma;
+   var yTilt = e.beta;
+
+   console.log("x", xTilt);
+   console.log("y", yTilt);
+
+   cube_rot[0] = xTilt;
+   cube_rot[1] = yTilt;
+   mainProg();
+}
+	
 window.onmousemove = mouseMoveEvent;
 window.onmousedown = mouseDownEvent;
 window.onmouseup = mouseUpEvent;
@@ -414,8 +427,10 @@ window.onmouseup = mouseUpEvent;
 window.onkeydown = keyDownEvent;
 window.onkeyup = keyUpEvent;
 
-if (window.DeviceMotionEvent)
-window.addEventListener('devicemotion', tiltEvent);
+//if (window.DeviceMotionEvent)
+//window.addEventListener('devicemotion', tiltEvent);
+window.addEventListener('deviceorientation', tiltEvent);
+
 </script>
 
 </body>
